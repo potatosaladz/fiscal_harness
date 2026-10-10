@@ -1,0 +1,52 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fiscal-astra:dev
+    container_name: fiscal-astra-api
+    env_file:
+      # Optional: copy .env.example to .env to override the built-in defaults.
+      - path: .env
+        required: false
+    environment:
+      ASTRA_HOST: 0.0.0.0
+      ASTRA_PORT: "8000"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot quality-gate runner. The repository is mounted so that read-only
+  # checks see live source and write commands (format, uv lock) persist.
+  #   docker compose run --rm tools
+  #   docker compose run --rm tools ruff format --check .
+  #   docker compose run --rm tools ruff check .
+  #   docker compose run --rm tools mypy src
+  #   docker compose run --rm tools pytest
+  tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fiscal-astra:dev
+    profiles: ["tools"]
+    volumes:
+      - .:/app
+    environment:
+      # Import the mounted source instead of the wheel baked into the image.
+      PYTHONPATH: /app/src
+      # Keep tool caches out of the bind-mounted working tree.
+      RUFF_CACHE_DIR: /tmp/.ruff_cache
+      MYPY_CACHE_DIR: /tmp/.mypy_cache
+      PYTEST_ADDOPTS: -o cache_dir=/tmp/.pytest_cache
+    entrypoint: [""]
+    command: ["sh", "-c", "ruff format --check . && ruff check . && mypy src && pytest"]
