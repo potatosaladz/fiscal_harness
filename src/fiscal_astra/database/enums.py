@@ -152,7 +152,7 @@ class MessageRole(StrEnum):
 
 
 class AuditActionType(StrEnum):
-    """Audit action vocabulary (``04-output-audit-schema.md`` §10)."""
+    """Audit action vocabulary for the append-only audit trail."""
 
     INPUT = "input"
     TOOL_CALL = "tool_call"
@@ -163,6 +163,24 @@ class AuditActionType(StrEnum):
     DELIBERATION = "deliberation"
     DECISION = "decision"
     ERROR = "error"
+    INPUT_RECEIVED = "input_received"
+    VALIDATION_STARTED = "validation_started"
+    VALIDATION_COMPLETED = "validation_completed"
+    MODEL_PLAN_CREATED = "model_plan_created"
+    DATA_REQUESTED = "data_requested"
+    DATA_RETRIEVED = "data_retrieved"
+    DATA_VERIFIED = "data_verified"
+    SIMULATION_SUBMITTED = "simulation_submitted"
+    SIMULATION_STARTED = "simulation_started"
+    SIMULATION_COMPLETED = "simulation_completed"
+    SIMULATION_FAILED = "simulation_failed"
+    COMPUTATION_COMPLETED = "computation_completed"
+    AGENT_INVOKED = "agent_invoked"
+    AGENT_RESPONSE_RECEIVED = "agent_response_received"
+    DELIBERATION_STARTED = "deliberation_started"
+    DISAGREEMENT_RECORDED = "disagreement_recorded"
+    RECOMMENDATION_CREATED = "recommendation_created"
+    REPORT_GENERATED = "report_generated"
 
 
 class UncertaintyType(StrEnum):

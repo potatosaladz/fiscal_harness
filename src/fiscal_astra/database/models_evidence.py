@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -153,7 +153,7 @@ class Recommendation(Base, TimestampMixin):
 
 
 class AuditEvent(Base):
-    """Append-only event in the end-to-end audit trail."""
+    """Append-only, hash-chained event in the end-to-end audit trail."""
 
     __tablename__ = "audit_events"
 
@@ -165,21 +165,39 @@ class AuditEvent(Base):
         index=True,
     )
     sequence: Mapped[int] = mapped_column(Integer(), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    actor_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
     action_type: Mapped[AuditActionType] = mapped_column(String(30), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    inputs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
-    outputs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
-    assumptions: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
-    evidence_ids: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    input_refs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    output_refs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    assumption_refs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    evidence_refs: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
     confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    errors: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    error_info: Mapped[list[Any]] = mapped_column(json_type(), nullable=False, default=list)
+    previous_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    current_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     next_action: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_audit_event_run_sequence"),)
 
     run: Mapped[SimulationRun | None] = relationship(back_populates="audit_events")
+
+
+@event.listens_for(AuditEvent, "before_update")
+def _reject_audit_event_update(*_: Any) -> None:
+    """Reject in-process mutation of an audit event."""
+
+    raise ValueError("Audit events are append-only and cannot be updated")
+
+
+@event.listens_for(AuditEvent, "before_delete")
+def _reject_audit_event_delete(*_: Any) -> None:
+    """Reject in-process deletion of an audit event."""
+
+    raise ValueError("Audit events are append-only and cannot be deleted")
 
 
 class UncertaintyRecord(Base, TimestampMixin):
