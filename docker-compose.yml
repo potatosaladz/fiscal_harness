@@ -12,8 +12,18 @@ services:
     environment:
       ASTRA_HOST: 0.0.0.0
       ASTRA_PORT: "8000"
+      ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
+      ASTRA_S3_ENDPOINT: http://minio:9000
+      ASTRA_S3_ACCESS_KEY: astra
+      ASTRA_S3_SECRET_KEY: change-me
+      ASTRA_S3_USE_TLS: "false"
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     healthcheck:
       test:
         - CMD-SHELL
@@ -24,6 +34,47 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
+
+  # PostgreSQL database for Fiscal Astra. Lives in the project namespace so the
+  # whole stack starts and stops as one unit.
+  postgres:
+    image: postgres:16-alpine
+    container_name: fiscal-astra-postgres
+    environment:
+      POSTGRES_USER: astra
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: fiscal_astra
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astra -d fiscal_astra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # MinIO provides S3-compatible object storage for large simulation outputs
+  # and data snapshots. Only artifact references are stored in PostgreSQL.
+  minio:
+    image: minio/minio:latest
+    container_name: fiscal-astra-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: astra
+      MINIO_ROOT_PASSWORD: change-me
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # One-shot quality-gate runner. The repository is mounted so that read-only
@@ -48,5 +99,11 @@ services:
       RUFF_CACHE_DIR: /tmp/.ruff_cache
       MYPY_CACHE_DIR: /tmp/.mypy_cache
       PYTEST_ADDOPTS: -o cache_dir=/tmp/.pytest_cache
+      # Integration tests use the compose PostgreSQL when it is running.
+      ASTRA_TEST_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra_test
     entrypoint: [""]
     command: ["sh", "-c", "ruff format --check . && ruff check . && mypy src && pytest"]
+
+volumes:
+  postgres-data:
+  minio-data:

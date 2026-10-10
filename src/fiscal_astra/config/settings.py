@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+psycopg://astra:change-me@127.0.0.1:5432/fiscal_astra"
     )
+    s3_endpoint: str | None = Field(default=None)
+    s3_region: str = Field(default="us-east-1")
+    s3_access_key: str | None = Field(default=None)
+    s3_secret_key: str | None = Field(default=None)
+    s3_bucket_artifacts: str = Field(default="fiscal-astra-artifacts")
+    s3_bucket_data: str = Field(default="fiscal-astra-data")
+    s3_use_tls: bool = Field(default=True)
     artifact_root: str = Field(default="artifacts")
     llm_provider: str = Field(default="mock")
     llm_base_url: str | None = Field(default=None)
