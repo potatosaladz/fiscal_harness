@@ -1,13 +1,33 @@
 # Architecture
 
-Reserved for the component, deployment, and trust-boundary diagrams described by the
-technical design. Numerical engines will run outside the LLM adapter through a worker/tool
-boundary.
+Numerical engines run outside the HTTP process through a durable Redis/Dramatiq worker
+boundary. The API persists the complete request manifest before it publishes only `run_id`.
 
-## Fase 0 boundaries (implemented)
+```text
+POST /runs
+    -> PostgreSQL simulation_runs (pending)
+    -> Redis/Dramatiq (run_id)
+    -> worker container
+       -> claim row with lock (validating)
+       -> resolve engine registry
+       -> validate -> run -> persist result/artifacts
+       -> append audit events
+```
 
-- API container: exposes `/health` and `/ready`, owns no state.
-- Tools container: ephemeral, binds the working tree, runs formatter, linter, type checker,
-  and tests.
+## Containers
 
-No numerical computation exists yet. The readiness endpoint must continue to reflect that.
+- `api`: FastAPI producer. It does not import or execute a numerical engine during `POST /runs`.
+- `worker`: independently supervised Dramatiq process. It reconstructs the request from the
+  PostgreSQL manifest, resolves the engine through the registry, and owns simulation execution.
+- `redis`: append-only Redis broker with a persistent volume for queued messages.
+- `postgres`: durable run, result, artifact metadata, and hash-chained audit storage.
+- `minio` is optional under the `object-storage` Compose profile; the MVP engine uses the
+  shared artifact volume directly.
+
+## Worker guarantees
+
+- Atomic row-lock claim makes duplicate delivery for the same `run_id` a no-op after the first
+  claim or terminal state.
+- Dramatiq retries transient worker exceptions up to `ASTRA_SIMULATION_MAX_ATTEMPTS`.
+- Every retry/failure stores the complete traceback in the run and an append-only audit event.
+- Results and artifacts are written before the terminal success event.

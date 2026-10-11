@@ -98,11 +98,11 @@ class SimulationPersistenceService:
         )
 
     def mark_submitted(self, request: SimulationRequest) -> None:
-        """Persist queue admission before returning control to the caller."""
+        """Write submission audit before enqueue attempt."""
 
         with self._session_factory.begin() as session:
             run = self._require_run(session, request.run_id)
-            run.status = RunStatus.QUEUED.value
+            run.status = RunStatus.PENDING.value
             run.provenance = {
                 **(run.provenance or {}),
                 "request": request.model_dump(mode="json"),
@@ -112,12 +112,156 @@ class SimulationPersistenceService:
         self._audit_logger.record(
             run_id=persisted_run_id,
             trace_id=request.run_id,
-            actor_type="simulation_queue",
-            actor_id="local_worker_queue",
+            actor_type="api_submission",
+            actor_id="run_service",
             action_type=AuditActionType.SIMULATION_SUBMITTED,
-            description="Simulation accepted by the background worker queue",
+            description="Simulation submitted by API",
             input_refs=[{"engine": request.engine_name, "mode": request.baseline_or_policy}],
-            next_action="simulation_worker_pickup",
+            next_action="enqueue_to_broker",
+        )
+
+    def mark_enqueue_failed(self, request: SimulationRequest, error: Exception) -> None:
+        """Record enqueue failure without changing run status."""
+
+        with self._session_factory() as session:
+            run = self._require_run(session, request.run_id)
+            persisted_run_id = run.id
+        self._audit_logger.record_error(
+            run_id=persisted_run_id,
+            trace_id=request.run_id,
+            actor_type="api_submission",
+            actor_id="run_service",
+            description="Failed to enqueue simulation to broker",
+            error_info=[{"type": type(error).__name__, "message": str(error)}],
+        )
+
+    def mark_enqueued(self, request: SimulationRequest, job_id: str) -> None:
+        """Record successful enqueue and store the broker message id."""
+
+        with self._session_factory.begin() as session:
+            run = self._require_run(session, request.run_id)
+            run.status = RunStatus.QUEUED.value
+            run.active_job_id = job_id
+            session.flush()
+            persisted_run_id = run.id
+        self._audit_logger.record(
+            run_id=persisted_run_id,
+            trace_id=request.run_id,
+            actor_type="api_submission",
+            actor_id="run_service",
+            action_type=AuditActionType.SIMULATION_ENQUEUED,
+            description=f"Simulation enqueued with job_id={job_id}",
+            output_refs=[{"job_id": job_id}],
+            next_action="worker_claim",
+        )
+
+    def claim_for_validation(self, request: SimulationRequest) -> bool:
+        """Atomically claim a pending/queued run and transition to validating."""
+
+        with self._session_factory.begin() as session:
+            run = session.scalars(
+                select(SimulationRun)
+                .where(SimulationRun.id == uuid.UUID(request.run_id))
+                .with_for_update()
+            ).one_or_none()
+            if run is None:
+                raise ValueError(f"SimulationRun not found: {request.run_id}")
+            if run.status not in (RunStatus.PENDING.value, RunStatus.QUEUED.value):
+                return False
+            run.attempt_count += 1
+            run.status = RunStatus.VALIDATING.value
+            attempt = run.attempt_count
+            session.flush()
+            persisted_run_id = run.id
+        self._audit_logger.record(
+            run_id=persisted_run_id,
+            trace_id=request.run_id,
+            actor_type="simulation_worker",
+            actor_id=request.engine_name,
+            action_type=AuditActionType.VALIDATION_STARTED,
+            description=f"Worker claimed run attempt={attempt}",
+            next_action="validate_request",
+        )
+        return True
+
+    def record_validation(self, request: SimulationRequest, validation: Any) -> None:
+        """Persist validation outcome without changing run status yet."""
+
+        with self._session_factory() as session:
+            run = self._require_run(session, request.run_id)
+            persisted_run_id = run.id
+        self._audit_logger.record(
+            run_id=persisted_run_id,
+            trace_id=request.run_id,
+            actor_type="simulation_worker",
+            actor_id=request.engine_name,
+            action_type=AuditActionType.VALIDATION_COMPLETED,
+            description=f"Validation valid={validation.valid}",
+            output_refs=[{"valid": validation.valid, "errors": validation.errors}],
+        )
+
+    def attempt_count(self, run_id: str) -> int:
+        with self._session_factory() as session:
+            run = self._require_run(session, run_id)
+            return run.attempt_count
+
+    def mark_retry_or_failure(self, request: SimulationRequest, error: Exception, tb: str) -> bool:
+        """Mark failure with retry signal if attempts remain."""
+
+        with self._session_factory.begin() as session:
+            run = self._require_run(session, request.run_id)
+            retry = run.attempt_count < run.max_attempts
+            if retry:
+                run.status = RunStatus.QUEUED.value
+            else:
+                run.status = RunStatus.FAILED.value
+                run.finished_at = datetime.now(UTC)
+                run.error_message = tb
+            session.flush()
+            persisted_run_id = run.id
+        if retry:
+            self._audit_logger.record(
+                run_id=persisted_run_id,
+                trace_id=request.run_id,
+                actor_type="simulation_worker",
+                actor_id=request.engine_name,
+                action_type=AuditActionType.SIMULATION_RETRY_SCHEDULED,
+                description=f"Retryable failure attempt={run.attempt_count}/{run.max_attempts}",
+                error_info=[{"type": type(error).__name__, "message": str(error), "tb": tb}],
+                next_action="dramatiq_retry",
+            )
+        else:
+            self._audit_logger.record(
+                run_id=persisted_run_id,
+                trace_id=request.run_id,
+                actor_type="simulation_worker",
+                actor_id=request.engine_name,
+                action_type=AuditActionType.SIMULATION_FAILED,
+                description=f"Exhausted retries attempt={run.attempt_count}/{run.max_attempts}",
+                error_info=[{"type": type(error).__name__, "message": str(error), "tb": tb}],
+            )
+        return retry
+
+    def mark_terminal_exception(
+        self, request: SimulationRequest, error: Exception, tb: str
+    ) -> None:
+        """Mark terminal error without retry."""
+
+        with self._session_factory.begin() as session:
+            run = self._require_run(session, request.run_id)
+            run.status = RunStatus.FAILED.value
+            run.finished_at = datetime.now(UTC)
+            run.error_message = tb
+            session.flush()
+            persisted_run_id = run.id
+        self._audit_logger.record(
+            run_id=persisted_run_id,
+            trace_id=request.run_id,
+            actor_type="simulation_worker",
+            actor_id=request.engine_name,
+            action_type=AuditActionType.SIMULATION_FAILED,
+            description=f"Terminal exception {type(error).__name__}",
+            error_info=[{"type": type(error).__name__, "message": str(error), "tb": tb}],
         )
 
     def persist_result(
@@ -221,7 +365,7 @@ class SimulationPersistenceService:
         with self._session_factory.begin() as session:
             run = self._require_run(session, request.run_id)
             run.stage = RunStage.REPORT_READY.value
-            run.status = RunStatus.COMPLETED.value
+            run.status = RunStatus.SUCCEEDED.value
             run.finished_at = datetime.now(UTC)
             run.solver_diagnostics = {
                 "convergence": result.convergence,
@@ -320,8 +464,9 @@ class SimulationPersistenceService:
     def _persist_failure(self, request: SimulationRequest, result: SimulationResult) -> None:
         with self._session_factory.begin() as session:
             run = self._require_run(session, request.run_id)
+            not_executed = result.status == "not_executed"
             run.stage = RunStage.ERROR.value
-            run.status = RunStatus.FAILED.value
+            run.status = RunStatus.NOT_EXECUTED.value if not_executed else RunStatus.FAILED.value
             run.finished_at = datetime.now(UTC)
             run.error_message = result.error or "Simulation failed without a message"
             session.flush()
@@ -332,8 +477,12 @@ class SimulationPersistenceService:
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.SIMULATION_FAILED,
-            description="Simulation failed",
-            error_info=[{"type": "EngineError", "message": result.error or "unknown"}],
+            description=(
+                "Simulation not executed because validation failed"
+                if result.status == "not_executed"
+                else "Simulation failed"
+            ),
+            error_info=[{"type": "ValidationError", "message": result.error or "unknown"}],
         )
 
     def _register_artifact(

@@ -50,11 +50,14 @@ class RunStatus(StrEnum):
     """Lifecycle status of a scenario version or simulation run."""
 
     DRAFT = "draft"
+    PENDING = "pending"
+    VALIDATING = "validating"
     QUEUED = "queued"
     RUNNING = "running"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    NOT_EXECUTED = "not_executed"
 
 
 class NumericalStatus(StrEnum):
@@ -187,6 +190,8 @@ class AuditActionType(StrEnum):
     DATA_RETRIEVED = "data_retrieved"
     DATA_VERIFIED = "data_verified"
     SIMULATION_SUBMITTED = "simulation_submitted"
+    SIMULATION_ENQUEUED = "simulation_enqueued"
+    SIMULATION_RETRY_SCHEDULED = "simulation_retry_scheduled"
     SIMULATION_STARTED = "simulation_started"
     SIMULATION_COMPLETED = "simulation_completed"
     SIMULATION_FAILED = "simulation_failed"

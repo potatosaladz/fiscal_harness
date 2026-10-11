@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from fiscal_astra import __version__
+from fiscal_astra.api.routes import runs
 from fiscal_astra.config.settings import get_settings
 
 settings = get_settings()
@@ -15,6 +16,8 @@ app = FastAPI(
         "not implemented in this phase."
     ),
 )
+
+app.include_router(runs.router)
 
 
 @app.get("/health", tags=["health"])

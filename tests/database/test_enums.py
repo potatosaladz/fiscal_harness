@@ -32,11 +32,14 @@ def test_run_stage_values() -> None:
 
 def test_run_status_values() -> None:
     assert enums.RunStatus.DRAFT == "draft"
+    assert enums.RunStatus.PENDING == "pending"
+    assert enums.RunStatus.VALIDATING == "validating"
     assert enums.RunStatus.QUEUED == "queued"
     assert enums.RunStatus.RUNNING == "running"
-    assert enums.RunStatus.COMPLETED == "completed"
+    assert enums.RunStatus.SUCCEEDED == "succeeded"
     assert enums.RunStatus.FAILED == "failed"
     assert enums.RunStatus.CANCELLED == "cancelled"
+    assert enums.RunStatus.NOT_EXECUTED == "not_executed"
 
 
 def test_numerical_status_default_not_executed() -> None:

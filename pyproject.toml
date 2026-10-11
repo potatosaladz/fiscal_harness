@@ -16,6 +16,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4.0",
     "alembic>=1.13,<2.0",
     "boto3>=1.35,<2.0",
+    "dramatiq[redis]>=2.0,<3.0",
     "pyarrow>=18.0,<20.0",
 ]
 
@@ -33,6 +34,7 @@ packages = ["src/fiscal_astra"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["integration: requires the API, Redis, worker, and PostgreSQL containers"]
 
 [tool.ruff]
 target-version = "py312"

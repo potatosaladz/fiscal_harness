@@ -12,9 +12,11 @@ docker compose config       # compose file parses; verifies optional .env handli
 ### Start the service
 
 ```bash
-make up
-# or: docker compose up -d api
+docker compose up -d postgres redis api worker
 ```
+
+The API producer and simulation worker are separate containers. Optional object storage can be
+started with `docker compose --profile object-storage up -d minio`.
 
 The API listens on `ASTRA_PORT` (default 8000) inside the container and is published on the
 same host port.
@@ -45,7 +47,11 @@ make verify
 
 ### Failure recovery
 
-- API does not start: check `make logs`, confirm the port is not in use, rebuild the image.
+- API does not start: check `docker compose logs api`, confirm the port is not in use, rebuild the image.
+- Worker does not consume jobs: check `docker compose logs worker`, Redis health, and the
+  `ASTRA_BROKER_URL` value in both API and worker containers.
+- A run remains queued: inspect Redis and the worker logs; do not execute the engine in the API
+  container as a workaround. The broker message can be safely redelivered by the worker.
 - `make verify` fails: fix the reported issue; do not bypass a gate.
 - Image build fails on `uv sync --frozen`: the lock is out of date. Run `make lock`,
   rebuild, and commit `uv.lock`.

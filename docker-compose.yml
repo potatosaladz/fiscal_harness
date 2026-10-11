@@ -13,6 +13,8 @@ services:
       ASTRA_HOST: 0.0.0.0
       ASTRA_PORT: "8000"
       ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
+      ASTRA_BROKER_URL: redis://redis:6379/0
+      ASTRA_SIMULATION_QUEUE_NAME: simulations
       ASTRA_S3_ENDPOINT: http://minio:9000
       ASTRA_S3_ACCESS_KEY: astra
       ASTRA_S3_SECRET_KEY: change-me
@@ -22,8 +24,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_started
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
@@ -34,6 +36,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fiscal-astra:dev
+    container_name: fiscal-astra-worker
+    command: ["dramatiq", "fiscal_astra.worker.tasks", "--processes", "1", "--threads", "2", "--queues", "simulations"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
+      ASTRA_BROKER_URL: redis://redis:6379/0
+      ASTRA_SIMULATION_QUEUE_NAME: simulations
+      ASTRA_ARTIFACT_ROOT: /var/lib/fiscal-astra/artifacts
+    volumes:
+      - simulation-artifacts:/var/lib/fiscal-astra/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   # PostgreSQL database for Fiscal Astra. Lives in the project namespace so the
@@ -59,6 +87,7 @@ services:
   # MinIO provides S3-compatible object storage for large simulation outputs
   # and data snapshots. Only artifact references are stored in PostgreSQL.
   minio:
+    profiles: ["object-storage"]
     image: minio/minio:latest
     container_name: fiscal-astra-minio
     command: server /data --console-address ":9001"
@@ -75,6 +104,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: fiscal-astra-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   # One-shot quality-gate runner. The repository is mounted so that read-only
@@ -107,3 +149,5 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  redis-data:
+  simulation-artifacts:

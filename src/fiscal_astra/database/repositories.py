@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fiscal_astra.database.enums import ProvenanceType
+from fiscal_astra.database.enums import ProvenanceType, RunStatus
 from fiscal_astra.database.models_scenario import Scenario, ScenarioVersion
 from fiscal_astra.database.models_simulation import (
     DataSeries,
@@ -57,8 +58,10 @@ class ScenarioRepository:
         reference_period: str | None = None,
         cutoff_at: datetime | None = None,
         provenance: dict[str, Any] | None = None,
+        scenario_id: uuid.UUID | None = None,
     ) -> Scenario:
         scenario = Scenario(
+            id=scenario_id or uuid.uuid4(),
             slug=slug,
             title=title,
             description=description,
@@ -128,12 +131,15 @@ class SimulationRunRepository:
         label: str,
         random_seed: int | None = None,
         code_version: str | None = None,
+        run_id: uuid.UUID | None = None,
     ) -> SimulationRun:
         run = SimulationRun(
+            id=run_id or uuid.uuid4(),
             scenario_version_id=scenario_version.id,
             label=label,
             random_seed=random_seed,
             code_version=code_version,
+            status=RunStatus.PENDING.value,
             provenance={
                 "created_at": datetime.now(UTC).isoformat(),
             },

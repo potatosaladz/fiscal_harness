@@ -101,7 +101,7 @@ def test_worker_persists_completed_result_with_provenance(
     with session_factory() as session:
         run = session.get(SimulationRun, uuid.UUID(run_id))
         assert run is not None
-        assert run.status == RunStatus.COMPLETED.value
+        assert run.status == RunStatus.SUCCEEDED.value
         assert run.started_at is not None and run.finished_at is not None
         assert run.provenance["request"]["engine_name"] == "fiscal_debt_dynamics_mvp"
 
@@ -193,7 +193,7 @@ def test_invalid_input_persists_failed_run_without_numeric_output(
     with session_factory() as session:
         run = session.get(SimulationRun, uuid.UUID(run_id))
         assert run is not None
-        assert run.status == RunStatus.FAILED.value
+        assert run.status == RunStatus.NOT_EXECUTED.value
         assert run.error_message and "nominal_gdp_growth_rate" in run.error_message
         assert run.solver_diagnostics is None
         assert (
@@ -274,4 +274,4 @@ def test_log_artifact_captures_worker_trace(
     log_artifact = service.store_log(request, ["line-one", "line-two"])
 
     assert Path(log_artifact.location).exists()
-    assert service.diagnostics(run_id)["status"] == RunStatus.COMPLETED.value
+    assert service.diagnostics(run_id)["status"] == RunStatus.SUCCEEDED.value
