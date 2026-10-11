@@ -15,6 +15,7 @@ services:
       ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
       ASTRA_BROKER_URL: redis://redis:6379/0
       ASTRA_SIMULATION_QUEUE_NAME: simulations
+      ASTRA_ORCHESTRATOR_QUEUE_NAME: orchestrator
       ASTRA_S3_ENDPOINT: http://minio:9000
       ASTRA_S3_ACCESS_KEY: astra
       ASTRA_S3_SECRET_KEY: change-me
@@ -52,6 +53,36 @@ services:
       ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
       ASTRA_BROKER_URL: redis://redis:6379/0
       ASTRA_SIMULATION_QUEUE_NAME: simulations
+      ASTRA_ARTIFACT_ROOT: /var/lib/fiscal-astra/artifacts
+    volumes:
+      - simulation-artifacts:/var/lib/fiscal-astra/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  # Dedicated orchestrator process. It owns the durable run state machine and
+  # dispatches numerical work to the simulation queue; it never calculates
+  # policy outputs itself.
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fiscal-astra:dev
+    container_name: fiscal-astra-orchestrator
+    command: ["dramatiq", "fiscal_astra.orchestrator.tasks", "--processes", "1", "--threads", "2", "--queues", "orchestrator"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ASTRA_DATABASE_URL: postgresql+psycopg://astra:change-me@postgres:5432/fiscal_astra
+      ASTRA_BROKER_URL: redis://redis:6379/0
+      ASTRA_SIMULATION_QUEUE_NAME: simulations
+      ASTRA_ORCHESTRATOR_QUEUE_NAME: orchestrator
       ASTRA_ARTIFACT_ROOT: /var/lib/fiscal-astra/artifacts
     volumes:
       - simulation-artifacts:/var/lib/fiscal-astra/artifacts

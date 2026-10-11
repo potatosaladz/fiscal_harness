@@ -1,7 +1,7 @@
 """End-to-end API -> Redis -> worker -> PostgreSQL test.
 
-Run this test against the compose stack with ``ASTRA_E2E=1`` after migrations:
-``docker compose up -d api worker redis postgres`` then run the tools container
+Run it against the compose stack with ``ASTRA_E2E=1`` after migrations:
+``docker compose up -d api orchestrator worker redis postgres`` then run the tools container
 on the compose network. It is skipped during the isolated unit suite because it
 requires the separately supervised API and worker containers.
 """
@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from fiscal_astra.database import AuditEvent, SimulationArtifact, SimulationResult, SimulationRun
-from fiscal_astra.database.enums import AuditActionType, RunStatus
+from fiscal_astra.database.enums import AuditActionType, OrchestratorState, RunStatus
 
 pytestmark = pytest.mark.integration
 
@@ -59,11 +59,14 @@ def test_post_run_is_processed_by_external_worker() -> None:
         while time.monotonic() < deadline:
             current = client.get(f"/runs/{run_id}")
             assert current.status_code == 200
-            if current.json()["status"] in {
-                RunStatus.SUCCEEDED.value,
+            current_payload = current.json()
+            if current_payload["status"] in {
                 RunStatus.FAILED.value,
                 RunStatus.NOT_EXECUTED.value,
-            }:
+            } or (
+                current_payload["status"] == RunStatus.SUCCEEDED.value
+                and current_payload["orchestrator_state"] == OrchestratorState.COMPLETED.value
+            ):
                 break
             time.sleep(0.25)
         else:
@@ -74,6 +77,8 @@ def test_post_run_is_processed_by_external_worker() -> None:
         run = session.get(SimulationRun, uuid.UUID(run_id))
         assert run is not None
         assert run.status == RunStatus.SUCCEEDED.value
+        assert run.orchestrator_state == OrchestratorState.COMPLETED.value
+        assert run.correlation_id
         assert (
             session.scalars(
                 select(SimulationResult).where(SimulationResult.run_id == run.id)
@@ -91,5 +96,8 @@ def test_post_run_is_processed_by_external_worker() -> None:
         ).all()
         assert events[0].action_type == AuditActionType.SIMULATION_SUBMITTED
         assert any(event.action_type == AuditActionType.VALIDATION_STARTED for event in events)
-        assert events[-1].action_type == AuditActionType.SIMULATION_COMPLETED
+        assert AuditActionType.SIMULATION_COMPLETED in [event.action_type for event in events]
+        assert events[-1].action_type == AuditActionType.STATE_TRANSITION
+        assert any(event.action_type == AuditActionType.STATE_TRANSITION for event in events)
+        assert all(event.trace_id == run.correlation_id for event in events)
     engine.dispose()

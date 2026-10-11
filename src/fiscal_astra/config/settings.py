@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     )
     broker_url: str = Field(default="redis://127.0.0.1:6379/0")
     simulation_queue_name: str = Field(default="simulations", min_length=1)
+    orchestrator_queue_name: str = Field(default="orchestrator", min_length=1)
     simulation_max_attempts: int = Field(default=3, ge=1, le=20)
     simulation_retry_min_backoff_ms: int = Field(default=1_000, ge=0)
     simulation_retry_max_backoff_ms: int = Field(default=30_000, ge=0)

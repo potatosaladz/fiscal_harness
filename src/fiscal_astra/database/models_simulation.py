@@ -30,6 +30,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from fiscal_astra.database.base import Base, ProvenanceMixin, TimestampMixin, json_type
 from fiscal_astra.database.enums import (
     NumericalStatus,
+    OrchestratorState,
     ProvenanceType,
     RunStage,
     RunStatus,
@@ -213,6 +214,17 @@ class SimulationRun(Base, TimestampMixin):
     label: Mapped[str] = mapped_column(String(200), nullable=False)
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default=RunStage.RECEIVED.value)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=RunStatus.PENDING.value)
+    correlation_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=lambda: uuid.uuid4().hex, index=True
+    )
+    orchestrator_state: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=OrchestratorState.RECEIVED.value,
+        index=True,
+    )
+    completed_stages: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(nullable=False, default=3)
     active_job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

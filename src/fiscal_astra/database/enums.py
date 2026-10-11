@@ -60,6 +60,30 @@ class RunStatus(StrEnum):
     NOT_EXECUTED = "not_executed"
 
 
+class OrchestratorState(StrEnum):
+    """Durable orchestrator state machine position (``01-orchestrator.md``).
+
+    This is the orchestrator's own position in the policy pipeline. It is
+    deliberately separate from :class:`RunStage` / :class:`RunStatus`, which
+    describe the numerical simulation lifecycle owned by the simulation worker.
+    """
+
+    RECEIVED = "received"
+    VALIDATING = "validating"
+    MODEL_PLANNING = "model_planning"
+    DATA_PREPARATION = "data_preparation"
+    SIMULATION_QUEUED = "simulation_queued"
+    SIMULATING = "simulating"
+    PARAMETER_EXTRACTION = "parameter_extraction"
+    POLICY_AGENT_ANALYSIS = "policy_agent_analysis"
+    DELIBERATION = "deliberation"
+    EVIDENCE_VERIFICATION = "evidence_verification"
+    REPORT_GENERATION = "report_generation"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class NumericalStatus(StrEnum):
     """Honest numeric availability status.
 
@@ -183,6 +207,8 @@ class AuditActionType(StrEnum):
     DECISION = "decision"
     ERROR = "error"
     INPUT_RECEIVED = "input_received"
+    STATE_TRANSITION = "state_transition"
+    STAGE_SKIPPED = "stage_skipped"
     VALIDATION_STARTED = "validation_started"
     VALIDATION_COMPLETED = "validation_completed"
     MODEL_PLAN_CREATED = "model_plan_created"

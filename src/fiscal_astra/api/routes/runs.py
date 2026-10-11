@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from fiscal_astra.config.settings import get_settings
 from fiscal_astra.database.session import create_database_engine, create_session_factory
 from fiscal_astra.services.run_service import RunSubmissionService
-from fiscal_astra.services.simulation_queue import DramatiqSimulationPublisher
+from fiscal_astra.services.simulation_queue import DramatiqOrchestratorPublisher
 from fiscal_astra.simulation.contracts import BaselineOrPolicy, SimulationRequest
 from fiscal_astra.simulation.debt_dynamics import FiscalDebtDynamicsMvp
 
@@ -22,7 +22,7 @@ _factory = create_session_factory(_engine)
 _service = RunSubmissionService(
     _factory,
     settings.artifact_root,
-    DramatiqSimulationPublisher(),
+    DramatiqOrchestratorPublisher(),
     settings.simulation_max_attempts,
 )
 
@@ -46,9 +46,12 @@ class RunResponse(BaseModel):
     """Response envelope for run submission and inspection."""
 
     run_id: str
+    correlation_id: str
     label: str
     status: str
     stage: str
+    orchestrator_state: str
+    error_code: str | None = None
     scenario_id: str
     created_at: str
     started_at: str | None = None
@@ -79,9 +82,12 @@ def submit_run(payload: RunSubmitRequest) -> RunResponse:
     run = _service.submit(request, payload.label)
     return RunResponse(
         run_id=str(run.id),
+        correlation_id=run.correlation_id,
         label=run.label,
         status=run.status,
         stage=run.stage,
+        orchestrator_state=run.orchestrator_state,
+        error_code=run.error_code,
         scenario_id=str(run.provenance["request"]["scenario_id"]),
         created_at=run.created_at.isoformat(),
         started_at=run.started_at.isoformat() if run.started_at else None,
@@ -100,9 +106,12 @@ def get_run(run_id: str) -> RunResponse:
         raise HTTPException(status_code=404, detail=f"SimulationRun not found: {run_id}") from None
     return RunResponse(
         run_id=str(run.id),
+        correlation_id=run.correlation_id,
         label=run.label,
         status=run.status,
         stage=run.stage,
+        orchestrator_state=run.orchestrator_state,
+        error_code=run.error_code,
         scenario_id=str(run.provenance["request"]["scenario_id"]),
         created_at=run.created_at.isoformat(),
         started_at=run.started_at.isoformat() if run.started_at else None,

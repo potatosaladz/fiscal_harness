@@ -24,7 +24,12 @@ class JobPublisher(Protocol):
 
 
 class RunSubmissionService:
-    """Create a durable run before sending its identifier to the broker."""
+    """Create a durable run before sending its identifier to the broker.
+
+    The run row (state ``received``) is the system of record; the broker only
+    carries the identifier. The orchestrator queue owns the pipeline from there,
+    so the HTTP process never executes a numerical engine.
+    """
 
     def __init__(
         self,
@@ -44,6 +49,7 @@ class RunSubmissionService:
         """Create the run, enqueue only its id, and return without executing an engine."""
 
         run_id = uuid.UUID(request.run_id)
+        correlation_id = uuid.uuid4().hex
         with self._session_factory.begin() as session:
             scenario, version = self._ensure_scenario_version(session, request)
             run = SimulationRunRepository(session).create_run(
@@ -52,6 +58,7 @@ class RunSubmissionService:
                 random_seed=request.random_seed,
                 code_version=request.engine_version,
                 run_id=run_id,
+                correlation_id=correlation_id,
             )
             run.max_attempts = self._max_attempts
             run.status = RunStatus.PENDING.value

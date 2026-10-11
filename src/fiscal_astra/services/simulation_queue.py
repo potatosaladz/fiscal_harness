@@ -20,6 +20,16 @@ class DramatiqSimulationPublisher:
         return str(message.message_id)
 
 
+class DramatiqOrchestratorPublisher:
+    """Publish a run id to the dedicated orchestrator queue."""
+
+    def enqueue(self, run_id: str) -> str:
+        from fiscal_astra.orchestrator.tasks import advance_run
+
+        message = advance_run.send(run_id)
+        return str(message.message_id)
+
+
 class SimulationWorker:
     """Compatibility harness for tests; production uses the container worker."""
 

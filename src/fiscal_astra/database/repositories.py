@@ -132,6 +132,7 @@ class SimulationRunRepository:
         random_seed: int | None = None,
         code_version: str | None = None,
         run_id: uuid.UUID | None = None,
+        correlation_id: str | None = None,
     ) -> SimulationRun:
         run = SimulationRun(
             id=run_id or uuid.uuid4(),
@@ -139,6 +140,7 @@ class SimulationRunRepository:
             label=label,
             random_seed=random_seed,
             code_version=code_version,
+            correlation_id=correlation_id or uuid.uuid4().hex,
             status=RunStatus.PENDING.value,
             provenance={
                 "created_at": datetime.now(UTC).isoformat(),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import traceback
 from pathlib import Path
 
@@ -12,13 +13,16 @@ from fiscal_astra.cli.simulation import build_request_from_run
 from fiscal_astra.config.settings import get_settings
 from fiscal_astra.database.enums import RunStatus
 from fiscal_astra.database.session import create_database_engine, create_session_factory
+from fiscal_astra.orchestrator.service import OrchestratorService
 from fiscal_astra.queue.broker import broker  # noqa: F401
 from fiscal_astra.services.audit_logger import AuditLogger
+from fiscal_astra.services.run_service import JobPublisher
 from fiscal_astra.services.simulation_service import SimulationPersistenceService
 from fiscal_astra.simulation.contracts import Diagnostics, SimulationResult
 from fiscal_astra.simulation.registry import resolve_engine
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class RetryableSimulationError(RuntimeError):
@@ -45,16 +49,34 @@ def _runtime() -> tuple[sessionmaker[Session], SimulationPersistenceService]:
 def execute_simulation(run_id: str) -> None:
     """Claim, validate, execute, and persist one run idempotently."""
 
+    from fiscal_astra.orchestrator.service import build_orchestrator_service
+    from fiscal_astra.services.simulation_queue import DramatiqOrchestratorPublisher
+
     factory, persistence = _runtime()
-    execute_simulation_run(run_id, factory, persistence)
+    execute_simulation_run(
+        run_id,
+        factory,
+        persistence,
+        orchestrator=build_orchestrator_service(factory),
+        publisher=DramatiqOrchestratorPublisher(),
+    )
 
 
 def execute_simulation_run(
     run_id: str,
     factory: sessionmaker[Session],
     persistence: SimulationPersistenceService,
+    orchestrator: OrchestratorService | None = None,
+    publisher: JobPublisher | None = None,
 ) -> None:
-    """Execute a run with injected persistence, used by the test harness."""
+    """Execute a run with injected persistence, used by the test harness.
+
+    ``orchestrator`` and ``publisher`` are optional so the detached CLI harness
+    can run an engine without the orchestrator container. When they are
+    provided, the worker moves the orchestrator state to ``SIMULATING`` (only if
+    the run is waiting in ``SIMULATION_QUEUED``) and signals the orchestrator to
+    resume once the result is persisted.
+    """
 
     request = build_request_from_run(factory, run_id)
     if not persistence.claim_for_validation(request):
@@ -78,6 +100,8 @@ def execute_simulation_run(
             persistence.persist_result(request, failed, engine.build_model_plan(request))
             return
 
+        if orchestrator is not None:
+            orchestrator.claim_simulation(run_id)
         plan = engine.build_model_plan(request)
         persistence.mark_running(request, plan)
         result = engine.run(request)
@@ -100,6 +124,15 @@ def execute_simulation_run(
             persistence.store_log(request, logs)
         except OSError:
             pass
+        if publisher is not None:
+            # Idempotent resume signal: the orchestrator returns immediately when
+            # the run is still simulating or already terminal.
+            try:
+                publisher.enqueue(run_id)
+            except Exception:  # pragma: no cover - broker outage
+                # The result is already durable; boot reconciliation resumes the
+                # orchestrator for this run once the broker is reachable again.
+                logger.warning("could not signal orchestrator resume for %s", run_id, exc_info=True)
 
 
 def terminal_statuses() -> set[str]:

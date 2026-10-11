@@ -80,9 +80,10 @@ class SimulationPersistenceService:
             run.error_message = None
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.SIMULATION_STARTED,
@@ -109,9 +110,10 @@ class SimulationPersistenceService:
             }
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="api_submission",
             actor_id="run_service",
             action_type=AuditActionType.SIMULATION_SUBMITTED,
@@ -119,20 +121,38 @@ class SimulationPersistenceService:
             input_refs=[{"engine": request.engine_name, "mode": request.baseline_or_policy}],
             next_action="enqueue_to_broker",
         )
+        self._audit_logger.record(
+            run_id=persisted_run_id,
+            trace_id=correlation_id,
+            actor_type="orchestrator",
+            actor_id="run_service",
+            action_type=AuditActionType.STATE_TRANSITION,
+            description="Run created in orchestrator state received",
+            input_refs=[{"from": None, "to": "received"}],
+            output_refs=[{"orchestrator_state": "received"}],
+            next_action="validating",
+        )
 
     def mark_enqueue_failed(self, request: SimulationRequest, error: Exception) -> None:
         """Record enqueue failure without changing run status."""
-
-        with self._session_factory() as session:
+        with self._session_factory.begin() as session:
             run = self._require_run(session, request.run_id)
+            run.error_code = "enqueue_failed"
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record_error(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="api_submission",
             actor_id="run_service",
             description="Failed to enqueue simulation to broker",
-            error_info=[{"type": type(error).__name__, "message": str(error)}],
+            error_info=[
+                {
+                    "error_code": "enqueue_failed",
+                    "type": type(error).__name__,
+                    "message": str(error),
+                }
+            ],
         )
 
     def mark_enqueued(self, request: SimulationRequest, job_id: str) -> None:
@@ -144,13 +164,14 @@ class SimulationPersistenceService:
             run.active_job_id = job_id
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="api_submission",
             actor_id="run_service",
             action_type=AuditActionType.SIMULATION_ENQUEUED,
-            description=f"Simulation enqueued with job_id={job_id}",
+            description=f"Run enqueued for orchestration with job_id={job_id}",
             output_refs=[{"job_id": job_id}],
             next_action="worker_claim",
         )
@@ -173,9 +194,10 @@ class SimulationPersistenceService:
             attempt = run.attempt_count
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.VALIDATION_STARTED,
@@ -190,9 +212,10 @@ class SimulationPersistenceService:
         with self._session_factory() as session:
             run = self._require_run(session, request.run_id)
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.VALIDATION_COMPLETED,
@@ -217,12 +240,14 @@ class SimulationPersistenceService:
                 run.status = RunStatus.FAILED.value
                 run.finished_at = datetime.now(UTC)
                 run.error_message = tb
+                run.error_code = "simulation_failed"
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         if retry:
             self._audit_logger.record(
                 run_id=persisted_run_id,
-                trace_id=request.run_id,
+                trace_id=correlation_id,
                 actor_type="simulation_worker",
                 actor_id=request.engine_name,
                 action_type=AuditActionType.SIMULATION_RETRY_SCHEDULED,
@@ -233,7 +258,7 @@ class SimulationPersistenceService:
         else:
             self._audit_logger.record(
                 run_id=persisted_run_id,
-                trace_id=request.run_id,
+                trace_id=correlation_id,
                 actor_type="simulation_worker",
                 actor_id=request.engine_name,
                 action_type=AuditActionType.SIMULATION_FAILED,
@@ -252,11 +277,13 @@ class SimulationPersistenceService:
             run.status = RunStatus.FAILED.value
             run.finished_at = datetime.now(UTC)
             run.error_message = tb
+            run.error_code = "simulation_terminal_exception"
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.SIMULATION_FAILED,
@@ -306,6 +333,43 @@ class SimulationPersistenceService:
             ).scalar_one_or_none()
             self._register_artifact(session, run, model, artifact)
         return artifact
+
+    def register_local_artifact(
+        self,
+        run_id: str,
+        artifact: ArtifactReference,
+        description: str,
+    ) -> None:
+        """Register a filesystem-backed artifact reference, idempotently.
+
+        The ``(bucket, object_key)`` uniqueness constraint makes a repeated
+        registration of the same path a no-op, so a resumed orchestra stage can
+        safely re-register the artifact it already wrote.
+        """
+
+        with self._session_factory.begin() as session:
+            run = self._require_run(session, run_id)
+            existing = session.execute(
+                select(SimulationArtifact).where(
+                    SimulationArtifact.bucket == "local",
+                    SimulationArtifact.object_key == artifact.location,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+            session.add(
+                SimulationArtifact(
+                    run_id=run.id,
+                    artifact_kind=artifact.kind,
+                    bucket="local",
+                    object_key=artifact.location,
+                    content_type=artifact.content_type,
+                    size_bytes=artifact.size_bytes,
+                    checksum_sha256=artifact.checksum_sha256,
+                    description=description,
+                )
+            )
+            session.flush()
 
     def load_result(self, run_id: str, name: str) -> dict[str, Any] | None:
         """Return a persisted series and its provenance for audit queries."""
@@ -393,9 +457,10 @@ class SimulationPersistenceService:
             for artifact in result.artifacts:
                 self._register_artifact(session, run, model, artifact)
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.SIMULATION_COMPLETED,
@@ -469,11 +534,13 @@ class SimulationPersistenceService:
             run.status = RunStatus.NOT_EXECUTED.value if not_executed else RunStatus.FAILED.value
             run.finished_at = datetime.now(UTC)
             run.error_message = result.error or "Simulation failed without a message"
+            run.error_code = "simulation_not_executed" if not_executed else "simulation_failed"
             session.flush()
             persisted_run_id = run.id
+            correlation_id = run.correlation_id
         self._audit_logger.record(
             run_id=persisted_run_id,
-            trace_id=request.run_id,
+            trace_id=correlation_id,
             actor_type="simulation_worker",
             actor_id=request.engine_name,
             action_type=AuditActionType.SIMULATION_FAILED,
