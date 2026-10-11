@@ -2,8 +2,10 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from fiscal_astra.llm.settings import LlmAgentSettings
 
 
 class Settings(BaseSettings):
@@ -45,6 +47,51 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="mock")
     llm_base_url: str | None = Field(default=None)
     llm_model: str | None = Field(default=None)
+    llm_model_version: str | None = Field(default=None)
+    llm_api_key: SecretStr | None = Field(default=None)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    llm_max_attempts: int = Field(default=3, ge=1, le=10)
+    llm_retry_backoff_seconds: float = Field(default=0.5, ge=0, le=60)
+    llm_temperature: float = Field(default=0.0, ge=0, le=2)
+    llm_max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    llm_json_mode: bool = Field(default=True)
+    llm_prompt_version: str = Field(default="v1", min_length=1, max_length=64)
+    llm_agents: dict[str, LlmAgentSettings] = Field(default_factory=dict)
+
+    def llm_default_agent_settings(self) -> LlmAgentSettings:
+        """Return the process-wide LLM configuration shared by every agent."""
+
+        return LlmAgentSettings(
+            provider=self.llm_provider,
+            base_url=self.llm_base_url,
+            model=self.llm_model,
+            model_version=self.llm_model_version,
+            api_key=self.llm_api_key,
+            timeout_seconds=self.llm_timeout_seconds,
+            max_attempts=self.llm_max_attempts,
+            retry_backoff_seconds=self.llm_retry_backoff_seconds,
+            temperature=self.llm_temperature,
+            max_tokens=self.llm_max_tokens,
+            json_mode=self.llm_json_mode,
+            prompt_version=self.llm_prompt_version,
+        )
+
+    def llm_agent_settings(self, agent_id: str) -> LlmAgentSettings:
+        """Return the effective LLM configuration for one agent.
+
+        ``ASTRA_LLM_AGENTS`` maps an agent id to the fields it overrides; every
+        field it leaves unset falls back to the process-wide defaults, so a
+        deployment can give the orchestrator, each policy sub-agent, and each
+        simulation agent a different endpoint, model, or key.
+        """
+
+        defaults = self.llm_default_agent_settings()
+        override = self.llm_agents.get(agent_id)
+        if override is None:
+            return defaults
+        merged = defaults.model_dump()
+        merged.update(override.model_dump(exclude_unset=True))
+        return LlmAgentSettings(**merged)
 
 
 @lru_cache(maxsize=1)
