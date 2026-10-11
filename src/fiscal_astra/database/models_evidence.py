@@ -44,6 +44,8 @@ class EvidenceRecord(Base, TimestampMixin):
     applicability_to_scenario: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_status: Mapped[str] = mapped_column(String(20), nullable=False)
     provenance: Mapped[dict[str, Any]] = mapped_column(json_type(), nullable=False, default=dict)
+    content_checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    access_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_checked")
 
     claims: Mapped[list[EvidenceClaim]] = relationship(
         back_populates="evidence", cascade="all, delete-orphan"

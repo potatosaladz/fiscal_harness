@@ -22,11 +22,12 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from fiscal_astra.database.base import Base, ProvenanceMixin, TimestampMixin
+from fiscal_astra.database.base import Base, ProvenanceMixin, TimestampMixin, json_type
 from fiscal_astra.database.enums import (
     NumericalStatus,
     ProvenanceType,
@@ -59,6 +60,9 @@ class DataSource(Base, TimestampMixin):
     citation: Mapped[str | None] = mapped_column(Text, nullable=True)
     retrieval_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(
+        json_type(), nullable=False, default=dict
+    )
 
     snapshots: Mapped[list[DataSnapshot]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
@@ -92,6 +96,13 @@ class DataSnapshot(Base, TimestampMixin):
     object_key: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(
+        json_type(), nullable=False, default=dict
+    )
+    transformation_history: Mapped[list[Any]] = mapped_column(
+        json_type(), nullable=False, default=list
+    )
+    validation: Mapped[dict[str, Any]] = mapped_column(json_type(), nullable=False, default=dict)
 
     __table_args__ = (
         UniqueConstraint("source_id", "vintage", name="uq_data_snapshot_source_vintage"),
@@ -412,3 +423,39 @@ class SimulationArtifact(Base, TimestampMixin):
     run: Mapped[SimulationRun] = relationship(back_populates="artifacts")
     model: Mapped[SimulationModel | None] = relationship()
     result: Mapped[SimulationResult | None] = relationship()
+
+
+IMMUTABLE_SNAPSHOT_MESSAGE = (
+    "Data snapshots are immutable and cannot be modified or deleted once persisted"
+)
+
+
+@event.listens_for(DataSnapshot, "before_update")
+def _reject_data_snapshot_update(*_: Any) -> None:
+    """Reject in-process mutation of a persisted data snapshot."""
+
+    from sqlalchemy import inspect
+    from sqlalchemy.orm import object_session
+
+    target = _[-1]
+    session = object_session(target)
+    state = inspect(target)
+    changed_persisted_fields = any(
+        attribute.history.has_changes()
+        for attribute in state.attrs
+        if attribute.key != "updated_at"
+    )
+    if session is not None and target in session.identity_map.values() and changed_persisted_fields:
+        raise ValueError(IMMUTABLE_SNAPSHOT_MESSAGE)
+
+
+@event.listens_for(DataSnapshot, "before_delete")
+def _reject_data_snapshot_delete(*_: Any) -> None:
+    """Reject in-process deletion of a persisted data snapshot."""
+
+    from sqlalchemy.orm import object_session
+
+    target = _[-1]
+    session = object_session(target)
+    if session is not None and target in session.identity_map.values():
+        raise ValueError(IMMUTABLE_SNAPSHOT_MESSAGE)

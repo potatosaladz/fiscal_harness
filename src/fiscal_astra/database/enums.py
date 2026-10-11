@@ -101,6 +101,22 @@ class SeriesFrequency(StrEnum):
     IRREGULAR = "irregular"
 
 
+class AccessStatus(StrEnum):
+    """Outcome of attempting to access an evidence source.
+
+    A source that could not actually be retrieved must never be recorded as
+    accessible; failures map to one of the explicit non-success states below so
+    the audit trail reflects reality.
+    """
+
+    NOT_CHECKED = "not_checked"
+    ACCESSIBLE = "accessible"
+    INACCESSIBLE = "inaccessible"
+    FORBIDDEN = "forbidden"
+    NOT_FOUND = "not_found"
+    REJECTED = "rejected"
+
+
 class ArtifactKind(StrEnum):
     """Kind of object stored in the artifact bucket."""
 

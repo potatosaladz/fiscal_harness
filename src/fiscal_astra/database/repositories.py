@@ -158,9 +158,11 @@ class DataSnapshotRepository:
         name: str,
         kind: str,
         verification_status: str,
+        source_metadata: dict[str, Any] | None = None,
         publisher: str | None = None,
         url: str | None = None,
         citation: str | None = None,
+        retrieval_notes: str | None = None,
     ) -> DataSource:
         source = DataSource(
             code=code,
@@ -169,7 +171,9 @@ class DataSnapshotRepository:
             publisher=publisher,
             url=url,
             citation=citation,
+            retrieval_notes=retrieval_notes,
             verification_status=verification_status,
+            source_metadata=source_metadata or {},
         )
         self._session.add(source)
         self._session.flush()
@@ -187,6 +191,9 @@ class DataSnapshotRepository:
         checksum_sha256: str | None = None,
         size_bytes: int | None = None,
         description: str | None = None,
+        source_metadata: dict[str, Any] | None = None,
+        transformation_history: list[Any] | None = None,
+        validation: dict[str, Any] | None = None,
     ) -> DataSnapshot:
         snapshot = DataSnapshot(
             source_id=source.id,
@@ -199,6 +206,9 @@ class DataSnapshotRepository:
             checksum_sha256=checksum_sha256,
             size_bytes=size_bytes,
             description=description,
+            source_metadata=source_metadata or {},
+            transformation_history=transformation_history or [],
+            validation=validation or {},
         )
         self._session.add(snapshot)
         self._session.flush()
