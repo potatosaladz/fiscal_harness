@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -55,6 +56,9 @@ class LlmRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1)
     json_mode: bool = True
+    pre_schema_validator: Callable[[dict[str, Any]], None] | None = Field(
+        default=None, exclude=True
+    )
 
     def canonical_input(self) -> dict[str, Any]:
         """Return the JSON-safe fields that define this invocation's identity."""
@@ -69,6 +73,7 @@ class LlmRequest(BaseModel):
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "json_mode": self.json_mode,
+            "pre_schema_validation": self.pre_schema_validator is not None,
         }
 
 

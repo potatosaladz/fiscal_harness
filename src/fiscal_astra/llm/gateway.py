@@ -168,6 +168,8 @@ class LlmGateway:
                 # schema error is safe to retry; an economic number is a
                 # terminal policy violation and must never be retried.
                 assert_within_numeric_boundary(payload, agent_id=self._agent_id)
+                if request.pre_schema_validator is not None:
+                    request.pre_schema_validator(payload)
                 output = _validate(payload, request)
             except LlmError as error:
                 failures.append({**error.as_error_info(), "attempt": attempts})
