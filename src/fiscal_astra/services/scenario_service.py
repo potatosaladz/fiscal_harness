@@ -21,6 +21,8 @@ from fiscal_astra.database.repositories import (
     SimulationRunRepository,
     canonical_spec_hash,
 )
+from fiscal_astra.simulation.contracts import BaselineOrPolicy, SimulationRequest
+from fiscal_astra.simulation.debt_dynamics import FiscalDebtDynamicsMvp
 
 
 class ScenarioService:
@@ -77,17 +79,41 @@ class ScenarioService:
         label: str,
         random_seed: int | None = None,
         code_version: str | None = None,
+        baseline_or_policy: BaselineOrPolicy = "baseline",
+        frequency: str = "annual",
+        horizon: int = 10,
+        parameters: dict[str, Any] | None = None,
+        requested_outputs: list[str] | None = None,
     ) -> SimulationRun:
         version = self._session.get(ScenarioVersion, scenario_version_id)
         if version is None:
             raise ValueError(f"ScenarioVersion not found: {scenario_version_id}")
-        run_repo = SimulationRunRepository(self._session)
-        return run_repo.create_run(
+        run = SimulationRunRepository(self._session).create_run(
             scenario_version=version,
             label=label,
             random_seed=random_seed,
             code_version=code_version,
         )
+        if parameters is not None:
+            request = SimulationRequest(
+                run_id=str(run.id),
+                scenario_id=str(version.scenario_id),
+                engine_name=FiscalDebtDynamicsMvp.engine_name,
+                engine_version=FiscalDebtDynamicsMvp.engine_version,
+                baseline_or_policy=baseline_or_policy,
+                horizon=horizon,
+                frequency=frequency,
+                parameters=parameters,
+                data_snapshot_ids=[],
+                random_seed=random_seed,
+                solver_options={},
+                requested_outputs=requested_outputs or ["debt_to_gdp"],
+            )
+            run.provenance = {
+                **(run.provenance or {}),
+                "request": request.model_dump(mode="json"),
+            }
+        return run
 
     @staticmethod
     def compute_spec_hash(
